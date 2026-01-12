@@ -1,16 +1,14 @@
 //! YRD0750RYF665F60 电子墨水屏驱动
 
 use core::marker::PhantomData;
-use embedded_hal::delay::DelayNs;
-use embedded_hal::digital::{InputPin, OutputPin};
-use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 
-#[cfg(feature = "simulator")]
-use crate::simulator::Window;
+use embedded_hal::digital::{InputPin, OutputPin};
+use embedded_hal_async::delay::DelayNs;
+use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 
 use crate::color::QuadColor;
 use crate::interface::DisplayInterface;
-use crate::traits::{InternalWiAdditions, RefreshLut, WaveshareDisplay};
+use crate::traits::{InternalWiAdditions, WaveshareDisplay};
 
 use crate::buffer_len;
 use crate::traits;
@@ -34,13 +32,8 @@ pub type Display7in5 = crate::graphics::Display<
 pub const WIDTH: u32 = 800;
 /// 显示高度
 pub const HEIGHT: u32 = 480;
-/// 默认背景颜色
-pub const DEFAULT_BACKGROUND_COLOR: QuadColor = QuadColor::White;
 
-/// 缓冲区字节数
-const NUM_DISPLAY_BITS: usize = WIDTH as usize / 4 * HEIGHT as usize;
 const IS_BUSY_LOW: bool = true;
-const SINGLE_BYTE_WRITE: bool = false;
 
 /// EPD 命令
 #[derive(Copy, Clone)]
@@ -120,8 +113,8 @@ impl traits::Command for Command {
 
 /// Epd7in5 (yrd0750ryf665f60) 驱动
 pub struct Epd7in5<SPI, BUSY, DC, RST, DELAY> {
-    interface: DisplayInterface<SPI, BUSY, DC, RST, SINGLE_BYTE_WRITE>,
-    color: QuadColor,
+    interface: DisplayInterface<SPI, BUSY, DC, RST>,
+    _color: PhantomData<QuadColor>,
     _delay: PhantomData<DELAY>,
     #[cfg(feature = "simulator")]
     simulator_window: Option<core::cell::RefCell<Window>>,
@@ -140,7 +133,7 @@ where
 {
     async fn init(&mut self, spi: &mut SPI, delay: &mut DELAY) -> Result<(), SPI::Error> {
         self.interface.reset(delay, 20_000, 20_000).await;
-        self.wait_until_idle(spi).await?;
+        self.wait_until_idle().await?;
         self.interface
             .cmd_with_data(spi, Command::MisteryCommand1, &[0x78])
             .await?;
@@ -163,7 +156,7 @@ where
             .cmd_with_data(spi, Command::PllControl, &[0x08])
             .await?;
         self.interface.cmd(spi, Command::PowerOn).await?;
-        self.wait_until_idle(spi).await?;
+        self.wait_until_idle().await?;
 
         Ok(())
     }
@@ -186,14 +179,12 @@ where
         dc: DC,
         rst: RST,
         _delay: &mut DELAY,
-        _delay_us: Option<u32>,
     ) -> Result<Self, SPI::Error> {
         let interface = DisplayInterface::new(busy, dc, rst);
-        let color = DEFAULT_BACKGROUND_COLOR;
 
         let epd = Epd7in5 {
             interface,
-            color,
+            _color: PhantomData,
             _delay: PhantomData,
             #[cfg(feature = "simulator")]
             simulator_window: None,
@@ -211,12 +202,12 @@ where
         self.init(spi, delay).await
     }
 
-    async fn sleep(&mut self, spi: &mut SPI, _delay: &mut DELAY) -> Result<(), SPI::Error> {
-        self.wait_until_idle(spi).await?;
+    async fn sleep(&mut self, spi: &mut SPI) -> Result<(), SPI::Error> {
+        self.wait_until_idle().await?;
         self.interface
             .cmd_with_data(spi, Command::PowerOff, &[0x00])
             .await?;
-        self.wait_until_idle(spi).await?;
+        self.wait_until_idle().await?;
         self.interface
             .cmd_with_data(spi, Command::DeepSleep, &[0xA5])
             .await?;
@@ -224,19 +215,8 @@ where
     }
 
     #[cfg(feature = "simulator")]
-    fn update_frame(
-        &mut self,
-        spi: &mut SPI,
-        buffer: &[u8],
-        _delay: &mut DELAY,
-    ) -> Result<(), SPI::Error> {
-        debug_assert_eq!(
-            buffer.len(),
-            NUM_DISPLAY_BITS,
-            "EPD buffer length mismatch: expected {}, got {}",
-            NUM_DISPLAY_BITS,
-            buffer.len()
-        );
+    async fn update_frame(&mut self, _spi: &mut SPI, buffer: &[u8]) -> Result<(), SPI::Error> {
+        use crate::color::ColorType;
 
         let color_iter = buffer.iter().flat_map(|byte| {
             [0, 2, 4, 6].iter().map(move |&shift| {
@@ -259,63 +239,55 @@ where
     }
 
     #[cfg(not(feature = "simulator"))]
-    async fn update_frame(
-        &mut self,
-        spi: &mut SPI,
-        buffer: &[u8],
-        _delay: &mut DELAY,
-    ) -> Result<(), SPI::Error> {
-        self.wait_until_idle(spi).await?;
+    async fn update_frame(&mut self, spi: &mut SPI, buffer: &[u8]) -> Result<(), SPI::Error> {
+        self.wait_until_idle().await?;
         self.interface
             .cmd_with_data(
                 spi,
                 Command::DataStartTransmission1,
-                &buffer[..NUM_DISPLAY_BITS],
+                &buffer[..(WIDTH as usize / 4 * HEIGHT as usize)],
             )
             .await?;
         Ok(())
     }
 
-    async fn display_frame(&mut self, spi: &mut SPI, delay: &mut DELAY) -> Result<(), SPI::Error> {
-        if cfg!(feature = "simulator") {
-            let _ = self.init(spi, delay).await;
-            #[cfg(feature = "simulator")]
-            {
-                if self.simulator_window.is_none() {
-                    self.simulator_window = Some(core::cell::RefCell::new(Window::new(
-                        &format!("EPD Simulator {}x{}", WIDTH, HEIGHT),
-                        &OutputSettingsBuilder::new().scale(1).build(),
-                    )));
-                }
-                if let Some(window) = &self.simulator_window {
-                    window.borrow_mut().update(&self.simulator_display);
-                }
-            }
-            Ok(())
-        } else {
-            self.interface
-                .cmd_with_data(spi, Command::DisplayRefresh, &[0x00])
-                .await?;
-            delay.delay_us(500);
-            self.wait_until_idle(spi).await?;
-            Ok(())
+    #[cfg(feature = "simulator")]
+    async fn display_frame(&mut self, _spi: &mut SPI) -> Result<(), SPI::Error> {
+        if self.simulator_window.is_none() {
+            self.simulator_window = Some(core::cell::RefCell::new(Window::new(
+                &format!("EPD Simulator {}x{}", WIDTH, HEIGHT),
+                &OutputSettingsBuilder::new().scale(1).build(),
+            )));
         }
+        if let Some(window) = &self.simulator_window {
+            window.borrow_mut().update(&self.simulator_display);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "simulator"))]
+    async fn display_frame(&mut self, spi: &mut SPI) -> Result<(), SPI::Error> {
+        self.interface
+            .cmd_with_data(spi, Command::DisplayRefresh, &[0x00])
+            .await?;
+        // delay.delay_us(500);
+        self.wait_until_idle().await?;
+        Ok(())
     }
 
     async fn update_and_display_frame(
         &mut self,
         spi: &mut SPI,
         buffer: &[u8],
-        delay: &mut DELAY,
     ) -> Result<(), SPI::Error> {
-        self.update_frame(spi, buffer, delay).await?;
+        self.update_frame(spi, buffer).await?;
         self.interface.cmd(spi, Command::PowerOn).await?;
-        self.display_frame(spi, delay).await?;
+        self.display_frame(spi).await?;
         Ok(())
     }
 
-    async fn clear_frame(&mut self, spi: &mut SPI, _delay: &mut DELAY) -> Result<(), SPI::Error> {
-        self.wait_until_idle(spi).await?;
+    async fn clear_frame(&mut self, spi: &mut SPI) -> Result<(), SPI::Error> {
+        self.wait_until_idle().await?;
 
         self.interface
             .cmd(spi, Command::DataStartTransmission1)
@@ -331,14 +303,6 @@ where
         Ok(())
     }
 
-    fn set_background_color(&mut self, color: Self::DisplayColor) {
-        self.color = color;
-    }
-
-    fn background_color(&self) -> &Self::DisplayColor {
-        &self.color
-    }
-
     fn width(&self) -> u32 {
         WIDTH
     }
@@ -347,17 +311,7 @@ where
         HEIGHT
     }
 
-    fn set_lut(
-        &mut self,
-        _spi: &mut SPI,
-        _delay: &mut DELAY,
-        _refresh_rate: Option<RefreshLut>,
-    ) -> Result<(), SPI::Error> {
-        unimplemented!();
-    }
-
-    async fn wait_until_idle(&mut self, spi: &mut SPI) -> Result<(), SPI::Error> {
-        let _ = spi;
+    async fn wait_until_idle(&mut self) -> Result<(), SPI::Error> {
         self.interface.wait_until_idle(IS_BUSY_LOW).await;
         Ok(())
     }

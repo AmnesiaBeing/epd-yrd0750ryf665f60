@@ -2,12 +2,10 @@ use crate::traits::Command;
 
 use core::marker::PhantomData;
 use embedded_hal::digital::{InputPin, OutputPin};
-use embedded_hal_async::{digital::Wait, spi::SpiDevice};
+use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
 
 /// EPD 设备连接接口
-///
-/// SINGLE_BYTE_WRITE: 是否逐字节写入数据块
-pub(crate) struct DisplayInterface<SPI, BUSY, DC, RST, const SINGLE_BYTE_WRITE: bool> {
+pub(crate) struct DisplayInterface<SPI, BUSY, DC, RST> {
     _spi: PhantomData<SPI>,
     /// 低电平表示忙，等待显示就绪
     busy: BUSY,
@@ -17,8 +15,7 @@ pub(crate) struct DisplayInterface<SPI, BUSY, DC, RST, const SINGLE_BYTE_WRITE: 
     rst: RST,
 }
 
-impl<SPI, BUSY, DC, RST, const SINGLE_BYTE_WRITE: bool>
-    DisplayInterface<SPI, BUSY, DC, RST, SINGLE_BYTE_WRITE>
+impl<SPI, BUSY, DC, RST> DisplayInterface<SPI, BUSY, DC, RST>
 where
     SPI: SpiDevice,
     BUSY: InputPin + Wait,
@@ -49,13 +46,7 @@ where
     pub(crate) async fn data(&mut self, spi: &mut SPI, data: &[u8]) -> Result<(), SPI::Error> {
         let _ = self.dc.set_high();
 
-        if SINGLE_BYTE_WRITE {
-            for val in data.iter().copied() {
-                self.write(spi, &[val]).await?;
-            }
-        } else {
-            self.write(spi, data).await?;
-        }
+        self.write(spi, data).await?;
 
         Ok(())
     }
@@ -111,18 +102,20 @@ where
         }
     }
 
-
-
     /// 复位设备
     ///
     /// 复位引脚保持低电平的时间对不同设备很重要
-    pub(crate) async fn reset<D: embedded_hal::delay::DelayNs>(&mut self, delay: &mut D, initial_delay: u32, duration: u32) {
+    pub(crate) async fn reset<D: DelayNs>(
+        &mut self,
+        delay: &mut D,
+        initial_delay: u32,
+        duration: u32,
+    ) {
         let _ = self.rst.set_high();
-        delay.delay_us(initial_delay);
-
+        delay.delay_us(initial_delay).await;
         let _ = self.rst.set_low();
-        delay.delay_us(duration);
+        delay.delay_us(duration).await;
         let _ = self.rst.set_high();
-        delay.delay_us(200_000);
+        delay.delay_us(200_000).await;
     }
 }

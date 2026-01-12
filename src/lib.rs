@@ -23,7 +23,7 @@ pub mod yrd0750ryf665f60;
 /// 包含除选定显示类型外的所有重要内容
 pub mod prelude {
     pub use crate::color::QuadColor;
-    pub use crate::traits::{QuickRefresh, RefreshLut, WaveshareDisplay};
+    pub use crate::traits::WaveshareDisplay;
 
     #[cfg(feature = "graphics")]
     pub use crate::graphics::Display;
