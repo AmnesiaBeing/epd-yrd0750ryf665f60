@@ -5,17 +5,32 @@ use embedded_graphics::mono_font::*;
 use embedded_graphics::{prelude::*, primitives::*, text::*};
 use embedded_hal_async::delay::DelayNs;
 use epd_yrd0750ryf665f60::{prelude::*, yrd0750ryf665f60::Epd7in5};
+use esp_backtrace as _;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::spi::master::Spi;
-use esp_println::println;
 use esp_sync::RawMutex;
+use rtt_target::rprintln;
+use rtt_target::rtt_init_print;
+
+esp_bootloader_esp_idf::esp_app_desc!();
+
+extern crate alloc;
 
 #[esp_rtos::main]
 async fn main(_spawner: embassy_executor::Spawner) -> ! {
+    esp_alloc::heap_allocator!(size: 64 * 1024);
+    rtt_init_print!();
+    esp_println::logger::init_logger_from_env();
     // 获取ESP32C6的外设
-    let mut peripherals = esp_hal::init(esp_hal::Config::default());
+    let mut peripherals =
+        esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()));
+    let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
 
-    println!("ESP32C6 EPD 7.5英寸测试");
+    let sw_interrupt =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
+
+    rprintln!("ESP32C6 EPD 7.5英寸测试");
 
     // 配置SPI引脚
     // 配置 SPI 引脚
@@ -60,21 +75,21 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let mut spi_device =
         embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice::new(&spi_bus_mutex, cs);
 
-    println!("SPI初始化完成");
+    rprintln!("SPI初始化完成");
 
     // 初始化EPD
-    println!("正在初始化EPD...");
+    rprintln!("正在初始化EPD...");
     let mut epd = Epd7in5::new(&mut spi_device, busy, dc, rst, &mut delay)
         .await
         .expect("EPD初始化失败");
 
-    println!("EPD初始化成功，尺寸：{}x{}", epd.width(), epd.height());
+    rprintln!("EPD初始化成功，尺寸：{}x{}", epd.width(), epd.height());
 
     // 创建显示缓冲区
     let mut display = epd_yrd0750ryf665f60::yrd0750ryf665f60::Display7in5::default();
 
     // 绘制一些图形
-    println!("绘制测试图形...");
+    rprintln!("绘制测试图形...");
 
     // 绘制矩形
     Rectangle::new(Point::new(10, 10), Size::new(100, 100))
@@ -112,28 +127,21 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     )
     .draw(&mut display)
     .unwrap();
-
     // 更新并显示帧
-    println!("更新显示...");
+    rprintln!("更新显示...");
+    let _ = epd.wake_up(&mut spi_device, &mut delay).await;
     epd.update_and_display_frame(&mut spi_device, display.buffer())
         .await
         .expect("更新显示失败");
 
-    println!("显示更新完成");
+    rprintln!("显示更新完成");
 
     // 进入低功耗模式
-    println!("测试完成，进入睡眠模式");
+    rprintln!("测试完成，进入睡眠模式");
     epd.sleep(&mut spi_device).await.expect("进入睡眠模式失败");
 
     // 无限循环
     loop {
         delay.delay_ms(1000u32).await;
     }
-}
-
-// 定义panic处理函数
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    println!("Panic: {}", info);
-    loop {}
 }
