@@ -1,0 +1,16 @@
+[package]
+name = "epd-simulator-example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+epd-yrd0750ryf665f60 = { path = "../..", features = ["simulator"] }
+embedded-graphics = "0.8.1"
+embedded-graphics-simulator = "0.8.0"
+embassy-executor = { version = "0.9.1", features = [
+    "arch-std",
+    "executor-thread",
+] }
+embassy-time = { version = "0.5.0", features = ["std"] }
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"

@@ -1,0 +1,13 @@
+[target.riscv32imac-unknown-none-elf]
+runner = "probe-rs run --chip=esp32c6 --preverify --always-print-stacktrace --no-location --catch-hardfault"
+rustflags = ["-C", "force-frame-pointers"]
+
+[env]
+ESP_LOG = "INFO"
+
+# 如果删除下面一行，VSCode的代码分析器将无法正常运行
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]

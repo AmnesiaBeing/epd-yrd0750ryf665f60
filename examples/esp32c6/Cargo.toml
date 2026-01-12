@@ -1,0 +1,40 @@
+[package]
+name = "epd-esp32c6-example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+epd-yrd0750ryf665f60 = { path = "../.." }
+embedded-graphics = "0.8.1"
+esp-hal = { version = "1.0.0", features = ["unstable"] }
+esp-println = { version = "0.16.1", features = ["esp32c6"] }
+esp-rtos = { version = "0.2.0", features = ["embassy", "esp32c6"] }
+embassy-executor = "0.9.1"
+embassy-time = "0.5.0"
+embassy-sync = "0.7.2"
+embassy-embedded-hal = "0.5.0"
+embedded-hal-bus = "0.3.0"
+embedded-hal-async = "1.0.0"
+esp-sync = { version = "0.1.1", features = ["esp32c6"] }
+
+[profile.dev]
+codegen-units = 1
+debug = 2
+strip = false
+incremental = false
+debug-assertions = true
+overflow-checks = true
+#opt-level = "s" # disable to play with GDB
+lto = false
+panic = "unwind"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+strip = false
+incremental = false
+debug-assertions = true
+overflow-checks = true
+opt-level = "z"
+lto = "fat"
+panic = "unwind"
