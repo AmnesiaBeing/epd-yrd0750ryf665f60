@@ -18,6 +18,7 @@ pub mod color;
 /// 显示与控制设备之间的物理连接接口
 mod interface;
 
+pub mod gdew0371w7;
 pub mod yrd0750ryf665f60;
 
 /// 包含除选定显示类型外的所有重要内容
